@@ -1,4 +1,6 @@
 require "rails3_enum/version"
+require 'active_record/base'
+require 'active_support/core_ext/object/deep_dup'
 
 # Declare an enum attribute where the values map to integers in the database,
 # but can be queried by name. Example:
@@ -7,20 +9,20 @@ require "rails3_enum/version"
 #     enum status: [ :active, :archived ]
 #   end
 #
-#   # conversation.update! status: 0
+#   # conversation.update_attributes! status: 0
 #   conversation.active!
 #   conversation.active? # => true
 #   conversation.status  # => "active"
 #
-#   # conversation.update! status: 1
+#   # conversation.update_attributes! status: 1
 #   conversation.archived!
 #   conversation.archived? # => true
 #   conversation.status    # => "archived"
 #
-#   # conversation.update! status: 1
+#   # conversation.update_attributes! status: 1
 #   conversation.status = "archived"
 #
-#   # conversation.update! status: nil
+#   # conversation.update_attributes! status: nil
 #   conversation.status = nil
 #   conversation.status.nil? # => true
 #   conversation.status      # => nil
@@ -65,7 +67,7 @@ require "rails3_enum/version"
 #   Conversation.where("status <> ?", Conversation.statuses[:archived])
 #
 # Where conditions on an enum attribute must use the ordinal value of an enum.
-module Enum
+module Rails3Enum
   def self.extended(base)
     base.class_attribute(:defined_enums)
     base.defined_enums = {}
@@ -84,12 +86,10 @@ module Enum
       name        = name.to_sym
 
       # def self.statuses statuses end
-      detect_enum_conflict!(name, name.to_s.pluralize, true)
       klass.singleton_class.send(:define_method, name.to_s.pluralize) { enum_values }
 
       _enum_methods_module.module_eval do
         # def status=(value) self[:status] = statuses[value] end
-        klass.send(:detect_enum_conflict!, name, "#{name}=")
         define_method("#{name}=") { |value|
           if enum_values.has_key?(value) || value.blank?
             self[name] = enum_values[value]
@@ -104,11 +104,9 @@ module Enum
         }
 
         # def status() statuses.key self[:status] end
-        klass.send(:detect_enum_conflict!, name, name)
         define_method(name) { enum_values.key self[name] }
 
         # def status_before_type_cast() statuses.key self[:status] end
-        klass.send(:detect_enum_conflict!, name, "#{name}_before_type_cast")
         define_method("#{name}_before_type_cast") { enum_values.key self[name] }
 
         pairs = values.respond_to?(:each_pair) ? values.each_pair : values.each_with_index
@@ -116,15 +114,12 @@ module Enum
           enum_values[value] = i
 
           # def active?() status == 0 end
-          klass.send(:detect_enum_conflict!, name, "#{value}?")
           define_method("#{value}?") { self[name] == i }
 
-          # def active!() update! status: :active end
-          klass.send(:detect_enum_conflict!, name, "#{value}!")
-          define_method("#{value}!") { update! name => value }
+          # def active!() update_attributes! status: :active end
+          define_method("#{value}!") { update_attributes! name => value }
 
           # scope :active, -> { where status: 0 }
-          klass.send(:detect_enum_conflict!, name, value, true)
           klass.scope value, -> { klass.where name => i }
         end
       end
@@ -161,37 +156,7 @@ module Enum
         mod
       end
     end
-
-    ENUM_CONFLICT_MESSAGE = \
-      "You tried to define an enum named \"%{enum}\" on the model \"%{klass}\", but " \
-      "this will generate a %{type} method \"%{method}\", which is already defined " \
-      "by %{source}."
-
-    def detect_enum_conflict!(enum_name, method_name, klass_method = false)
-      if klass_method && dangerous_class_method?(method_name)
-        raise ArgumentError, ENUM_CONFLICT_MESSAGE % {
-          enum: enum_name,
-          klass: self.name,
-          type: 'class',
-          method: method_name,
-          source: 'Active Record'
-        }
-      elsif !klass_method && dangerous_attribute_method?(method_name)
-        raise ArgumentError, ENUM_CONFLICT_MESSAGE % {
-          enum: enum_name,
-          klass: self.name,
-          type: 'instance',
-          method: method_name,
-          source: 'Active Record'
-        }
-      elsif !klass_method && method_defined_within?(method_name, _enum_methods_module, Module)
-        raise ArgumentError, ENUM_CONFLICT_MESSAGE % {
-          enum: enum_name,
-          klass: self.name,
-          type: 'instance',
-          method: method_name,
-          source: 'another enum'
-        }
-      end
-    end
 end
+
+# Extend ActiveRecord's functionality
+ActiveRecord::Base.send :extend, Rails3Enum
